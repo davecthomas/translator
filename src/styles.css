@@ -1,0 +1,141 @@
+:root {
+  --bg: #0a0e1a;
+  --bg-elev: #111626;
+  --surface: rgba(255, 255, 255, 0.04);
+  --surface-strong: rgba(255, 255, 255, 0.07);
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --text: #f4f6fb;
+  --text-dim: #aab3c5;
+  --text-faint: #6b7488;
+
+  /* English side — sky */
+  --en: #38bdf8;
+  --en-deep: #0ea5e9;
+  --en-glow: rgba(56, 189, 248, 0.35);
+
+  /* Hebrew side — emerald */
+  --he: #34d399;
+  --he-deep: #10b981;
+  --he-glow: rgba(52, 211, 153, 0.35);
+
+  /* Recording — rose */
+  --rec: #fb7185;
+  --rec-deep: #f43f5e;
+  --rec-glow: rgba(251, 113, 133, 0.4);
+
+  --radius: 20px;
+  --radius-sm: 14px;
+  --ui-font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --he-font: "Frank Ruhl Libre", "Noto Sans Hebrew", serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--ui-font);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Ambient background glow */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 50% at 18% 0%, rgba(56, 189, 248, 0.14), transparent 70%),
+    radial-gradient(55% 45% at 88% 8%, rgba(52, 211, 153, 0.12), transparent 70%),
+    radial-gradient(70% 60% at 50% 110%, rgba(99, 102, 241, 0.1), transparent 70%);
+}
+
+button {
+  font-family: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 var(--rec-glow);
+  }
+  70% {
+    box-shadow: 0 0 0 16px rgba(251, 113, 133, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(251, 113, 133, 0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes eq {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes nudge {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.55;
+  }
+  50% {
+    transform: translateY(6px);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
