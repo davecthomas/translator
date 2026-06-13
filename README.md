@@ -102,18 +102,42 @@ The repo is ready for Vercel out of the box. The same translation core (`server/
 
 If you ever do want CI-driven deploys (rather than Vercel's GitHub integration), the tokens (`VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`) belong in **GitHub → Settings → Secrets and variables → Actions**, never in committed files.
 
-### One-time setup
+### One-time setup — scripted (recommended)
+
+Two things only you can do (interactive, no script can automate them):
 
 1. Sign up at [vercel.com](https://vercel.com) — the free **Hobby** tier covers this app.
-2. **Import Project** → pick this GitHub repo. Vercel auto-detects Vite + the `api/` functions.
-3. In **Project Settings → Environment Variables**, add `ANTHROPIC_API_KEY` (set for *all environments*).
-4. First deploy fires automatically. Subsequent pushes to `main` deploy to prod; pull requests get preview URLs.
+2. `npx vercel login` — this opens a browser for OAuth.
+
+Then everything else is one command:
+
+```bash
+npm run vercel:setup
+```
+
+The script (`scripts/setup-vercel.sh`) is idempotent and safe to re-run. It will:
+
+- Verify you're logged into the Vercel CLI.
+- `vercel link` this checkout to a Vercel project (creates the gitignored `.vercel/project.json`).
+- Read `ANTHROPIC_API_KEY` from your shell environment or local `.env`.
+- Upload it to **production**, **preview**, and **development** environment scopes, skipping any scope where it's already set.
+- Trigger a production deploy.
 
 Verify the deploy with `GET /api/health` on your deploy URL — it returns `{ ok: true, keyConfigured: true }` when the key is wired up.
 
+Subsequent pushes to `main` deploy to prod via Vercel's GitHub integration; pull requests get preview URLs automatically.
+
+### One-time setup — manual fallback
+
+If you'd rather click through the dashboard:
+
+1. **Import Project** → pick this GitHub repo. Vercel auto-detects Vite + the `api/` functions.
+2. In **Project Settings → Environment Variables**, add `ANTHROPIC_API_KEY` (set for *all environments*).
+3. Trigger the first deploy.
+
 ### Optional: link locally for `vercel dev`
 
-If you want to run `vercel dev` against your project locally (gives you the same serverless runtime as production), run `vercel link` once. That creates `.vercel/project.json` — already excluded from git by `.gitignore`.
+`vercel dev` gives you the same serverless runtime locally as in production. Once you've run `npm run vercel:setup` (or `vercel link` directly), `vercel dev` works without any further setup. `.vercel/project.json` stays out of git.
 
 ## Configuration
 
@@ -129,7 +153,8 @@ configured, which is handy for deploy checks.
 
 | Path | Purpose |
 |---|---|
-| `start.sh` | One-command launcher (`./start.sh` or `npm run go`) |
+| `start.sh` | One-command local launcher (`./start.sh` or `npm run go`) |
+| `scripts/setup-vercel.sh` | One-command Vercel setup (`npm run vercel:setup`) — idempotent |
 | `src/VoiceTranslator.jsx` | Full UI: mic buttons, transcript cards, TTS, copy/export, typed fallback |
 | `src/styles.css` | Design tokens, ambient background, animations |
 | `src/main.jsx` | React entry point |
