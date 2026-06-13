@@ -1,14 +1,81 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 
-const HEB_FONT = "var(--he-font)";
 const UI_FONT = "var(--ui-font)";
+const HEB_FONT = "var(--he-font)";
+
+// ---------------------------------------------------------------------------
+// Supported "other" languages. English is always one side of the pair, so the
+// user only ever picks the non-English side. Keeping the table here means the
+// picker, the speech-recognition locale, the SpeechSynthesis voice, and the
+// rendered direction/font all stay in sync from one source of truth.
+// ---------------------------------------------------------------------------
+
+const LANGUAGES = {
+  he: {
+    nativeName: "עברית",
+    englishName: "Hebrew",
+    flag: "🇮🇱",
+    speech: "he-IL",
+    dir: "rtl",
+    font: HEB_FONT,
+  },
+  es: {
+    nativeName: "Español",
+    englishName: "Spanish",
+    flag: "🇪🇸",
+    speech: "es-ES",
+    dir: "ltr",
+    font: UI_FONT,
+  },
+  fr: {
+    nativeName: "Français",
+    englishName: "French",
+    flag: "🇫🇷",
+    speech: "fr-FR",
+    dir: "ltr",
+    font: UI_FONT,
+  },
+  zh: {
+    nativeName: "中文",
+    englishName: "Mandarin",
+    flag: "🇨🇳",
+    speech: "zh-CN",
+    dir: "ltr",
+    font: UI_FONT,
+  },
+  de: {
+    nativeName: "Deutsch",
+    englishName: "German",
+    flag: "🇩🇪",
+    speech: "de-DE",
+    dir: "ltr",
+    font: UI_FONT,
+  },
+};
+
+const LANG_CODES = Object.keys(LANGUAGES);
+const STORAGE_KEY = "translator.otherLang";
+
+// English-side speech locale and visual treatment (so the same data shape
+// works for both sides of the mic-button render).
+const ENGLISH = {
+  nativeName: "English",
+  englishName: "English",
+  flag: "🇺🇸",
+  speech: "en-US",
+  dir: "ltr",
+  font: UI_FONT,
+};
+
+function langInfo(code) {
+  return code === "en" ? ENGLISH : LANGUAGES[code];
+}
 
 // ---------------------------------------------------------------------------
 // Small presentational helpers
 // ---------------------------------------------------------------------------
 
 function Equalizer({ color }) {
-  // Five bars animating to fake a live waveform while the mic is open.
   const bars = [0, 1, 2, 3, 4];
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 3, height: 18 }}>
@@ -30,7 +97,6 @@ function Equalizer({ color }) {
   );
 }
 
-// A labeled, comfortably-tappable text button used for all secondary actions.
 function TextButton({ onClick, children, tone = "neutral", title }) {
   const tones = {
     neutral: { fg: "var(--text-dim)", bg: "var(--surface)", bd: "var(--border)" },
@@ -71,15 +137,23 @@ function TextButton({ onClick, children, tone = "neutral", title }) {
 
 export default function VoiceTranslator() {
   const [supported, setSupported] = useState(true);
-  const [listening, setListening] = useState(null); // 'en' | 'he' | null
+  const [listening, setListening] = useState(null); // 'en' | other code | null
   const [interim, setInterim] = useState("");
   const [busy, setBusy] = useState(false);
   const [speakAloud, setSpeakAloud] = useState(true);
   const [error, setError] = useState("");
-  const [turns, setTurns] = useState([]); // {id, srcLang, srcText, dstText, failed}
+  const [turns, setTurns] = useState([]); // {id, srcLang, dstLang, srcText, dstText, failed}
   const [showManual, setShowManual] = useState(false);
   const [manualText, setManualText] = useState("");
   const [copiedId, setCopiedId] = useState(null);
+
+  const [otherLang, setOtherLang] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved && LANG_CODES.includes(saved)) return saved;
+    } catch (e) {}
+    return "he";
+  });
 
   const recogRef = useRef(null);
   const scrollRef = useRef(null);
@@ -90,16 +164,24 @@ export default function VoiceTranslator() {
   }, []);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, otherLang);
+    } catch (e) {}
+  }, [otherLang]);
+
+  useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [turns, interim, busy]);
 
-  const translate = useCallback(async (text, srcLang) => {
+  const other = useMemo(() => LANGUAGES[otherLang], [otherLang]);
+
+  const translate = useCallback(async (text, srcLang, dstLang) => {
     const res = await fetch("/api/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, srcLang }),
+      body: JSON.stringify({ text, srcLang, dstLang }),
     });
     if (!res.ok) throw new Error(`API ${res.status}`);
     const data = await res.json();
@@ -107,10 +189,11 @@ export default function VoiceTranslator() {
     return data.translation;
   }, []);
 
-  const speak = useCallback((text, lang) => {
+  const speak = useCallback((text, langCode) => {
     try {
+      const info = langInfo(langCode);
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = lang === "he" ? "he-IL" : "en-US";
+      u.lang = info.speech;
       u.rate = 0.95;
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(u);
@@ -120,15 +203,15 @@ export default function VoiceTranslator() {
   }, []);
 
   const handleFinal = useCallback(
-    async (text, srcLang) => {
+    async (text, srcLang, dstLang) => {
       const id = Date.now();
-      setTurns((t) => [...t, { id, srcLang, srcText: text, dstText: null }]);
+      setTurns((t) => [...t, { id, srcLang, dstLang, srcText: text, dstText: null }]);
       setBusy(true);
       setError("");
       try {
-        const dst = await translate(text, srcLang);
+        const dst = await translate(text, srcLang, dstLang);
         setTurns((t) => t.map((x) => (x.id === id ? { ...x, dstText: dst } : x)));
-        if (speakAloud) speak(dst, srcLang === "he" ? "en" : "he");
+        if (speakAloud) speak(dst, dstLang);
       } catch (e) {
         setTurns((t) =>
           t.map((x) =>
@@ -149,11 +232,11 @@ export default function VoiceTranslator() {
       if (!turn.failed) return;
       setBusy(true);
       try {
-        const dst = await translate(turn.srcText, turn.srcLang);
+        const dst = await translate(turn.srcText, turn.srcLang, turn.dstLang);
         setTurns((t) =>
           t.map((x) => (x.id === turn.id ? { ...x, dstText: dst, failed: false } : x))
         );
-        if (speakAloud) speak(dst, turn.srcLang === "he" ? "en" : "he");
+        if (speakAloud) speak(dst, turn.dstLang);
       } catch (e) {
         /* keep failed state for another retry */
       } finally {
@@ -175,7 +258,7 @@ export default function VoiceTranslator() {
   }, []);
 
   const startListening = useCallback(
-    (lang) => {
+    (srcLang) => {
       setError("");
       if (listening) {
         stopListening();
@@ -187,10 +270,12 @@ export default function VoiceTranslator() {
         return;
       }
       const r = new SR();
-      r.lang = lang === "he" ? "he-IL" : "en-US";
+      r.lang = langInfo(srcLang).speech;
       r.interimResults = true;
       r.continuous = false;
       let finalText = "";
+
+      const dstLang = srcLang === "en" ? otherLang : "en";
 
       r.onresult = (ev) => {
         let interimStr = "";
@@ -218,24 +303,25 @@ export default function VoiceTranslator() {
         setListening(null);
         setInterim("");
         const cleaned = finalText.trim();
-        if (cleaned) handleFinal(cleaned, lang);
+        if (cleaned) handleFinal(cleaned, srcLang, dstLang);
       };
       try {
         r.start();
         recogRef.current = r;
-        setListening(lang);
+        setListening(srcLang);
       } catch (e) {
         setError("Couldn't start the microphone. Try again.");
       }
     },
-    [listening, stopListening, handleFinal]
+    [listening, stopListening, handleFinal, otherLang]
   );
 
-  const submitManual = (lang) => {
+  const submitManual = (srcLang) => {
     const t = manualText.trim();
     if (!t) return;
     setManualText("");
-    handleFinal(t, lang);
+    const dstLang = srcLang === "en" ? otherLang : "en";
+    handleFinal(t, srcLang, dstLang);
   };
 
   const copyTurn = useCallback((turn) => {
@@ -252,12 +338,12 @@ export default function VoiceTranslator() {
     const lines = turns
       .filter((t) => t.dstText && !t.failed)
       .map((t) => {
-        const srcLabel = t.srcLang === "he" ? "עברית" : "English";
-        const dstLabel = t.srcLang === "he" ? "English" : "עברית";
+        const srcLabel = langInfo(t.srcLang).nativeName;
+        const dstLabel = langInfo(t.dstLang).nativeName;
         return `${srcLabel}: ${t.srcText}\n${dstLabel}: ${t.dstText}\n`;
       });
     const blob = new Blob(
-      [`Hebrew Live Translator — conversation\n\n${lines.join("\n")}`],
+      [`Live Translator — conversation\n\n${lines.join("\n")}`],
       { type: "text/plain;charset=utf-8" }
     );
     const url = URL.createObjectURL(blob);
@@ -277,17 +363,107 @@ export default function VoiceTranslator() {
     } catch (e) {}
   }, []);
 
+  const changeOtherLang = useCallback(
+    (code) => {
+      if (code === otherLang) return;
+      if (listening) stopListening();
+      setOtherLang(code);
+    },
+    [otherLang, listening, stopListening]
+  );
+
   // -------------------------------------------------------------------------
-  // Mic button — the primary control
+  // Language picker — the headline mobile control. Horizontally scrollable row
+  // of large flag+name chips with snap, so on a phone you swipe and tap.
+  // -------------------------------------------------------------------------
+
+  const LanguagePicker = () => (
+    <div
+      role="radiogroup"
+      aria-label="Choose language to translate with English"
+      style={{
+        display: "flex",
+        gap: 10,
+        overflowX: "auto",
+        padding: "12px 18px 4px",
+        scrollSnapType: "x mandatory",
+        WebkitOverflowScrolling: "touch",
+        scrollbarWidth: "none",
+      }}
+      className="lang-strip"
+    >
+      {LANG_CODES.map((code) => {
+        const info = LANGUAGES[code];
+        const active = code === otherLang;
+        return (
+          <button
+            key={code}
+            role="radio"
+            aria-checked={active}
+            onClick={() => changeOtherLang(code)}
+            style={{
+              flex: "0 0 auto",
+              scrollSnapAlign: "start",
+              minHeight: 56,
+              minWidth: 108,
+              padding: "8px 14px",
+              borderRadius: 16,
+              border: `1.5px solid ${active ? "var(--alt)" : "var(--border-strong)"}`,
+              background: active
+                ? "linear-gradient(135deg, var(--alt-deep), var(--alt))"
+                : "var(--surface)",
+              color: active ? "#06121f" : "var(--text)",
+              cursor: "pointer",
+              transition: "all 160ms ease",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 2,
+              boxShadow: active ? "0 6px 20px var(--alt-glow)" : "none",
+            }}
+          >
+            <div style={{ fontSize: 22, lineHeight: 1 }} aria-hidden="true">
+              {info.flag}
+            </div>
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 700,
+                letterSpacing: -0.1,
+                fontFamily: info.font,
+              }}
+            >
+              {info.englishName}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  // -------------------------------------------------------------------------
+  // Mic button — the primary control. `lang` is the source language code.
   // -------------------------------------------------------------------------
 
   const MicButton = ({ lang }) => {
     const active = listening === lang;
-    const isHe = lang === "he";
-    const accent = isHe ? "var(--he)" : "var(--en)";
-    const accentDeep = isHe ? "var(--he-deep)" : "var(--en-deep)";
-    const glow = isHe ? "var(--he-glow)" : "var(--en-glow)";
+    const isEn = lang === "en";
+    const info = langInfo(lang);
+    const accent = isEn ? "var(--en)" : "var(--alt)";
+    const accentDeep = isEn ? "var(--en-deep)" : "var(--alt-deep)";
+    const glow = isEn ? "var(--en-glow)" : "var(--alt-glow)";
     const disabled = busy && !active;
+
+    const dstInfo = langInfo(isEn ? otherLang : "en");
+    const directionLabel = `${info.englishName} → ${dstInfo.englishName}`;
+
+    const activeLabel = isEn
+      ? "Listening… tap to stop"
+      : info.dir === "rtl"
+      ? "מקליט… הקש לסיום"
+      : `Listening… tap to stop`;
+    const idleLabel = isEn ? "Speak English" : `Speak ${info.englishName}`;
 
     return (
       <button
@@ -320,36 +496,35 @@ export default function VoiceTranslator() {
             gap: 8,
           }}
         >
-          <div style={{ height: 28, display: "flex", alignItems: "center" }}>
+          <div style={{ height: 28, display: "flex", alignItems: "center", gap: 8 }}>
             {active ? (
               <Equalizer color="#06121f" />
             ) : (
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                <rect x="9" y="2" width="6" height="12" rx="3" fill="#06121f" />
-                <path
-                  d="M5 11a7 7 0 0 0 14 0M12 18v3"
-                  stroke="#06121f"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
+              <>
+                <span style={{ fontSize: 20, lineHeight: 1 }} aria-hidden="true">
+                  {info.flag}
+                </span>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                  <rect x="9" y="2" width="6" height="12" rx="3" fill="#06121f" />
+                  <path
+                    d="M5 11a7 7 0 0 0 14 0M12 18v3"
+                    stroke="#06121f"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </>
             )}
           </div>
           <div
             style={{
               fontSize: 17,
               fontWeight: 700,
-              fontFamily: isHe ? HEB_FONT : UI_FONT,
+              fontFamily: info.font,
               letterSpacing: -0.2,
             }}
           >
-            {active
-              ? isHe
-                ? "מקליט… הקש לסיום"
-                : "Listening… tap to stop"
-              : isHe
-              ? "דברו עברית"
-              : "Speak English"}
+            {active ? activeLabel : idleLabel}
           </div>
           <div
             style={{
@@ -360,7 +535,7 @@ export default function VoiceTranslator() {
               letterSpacing: 0.2,
             }}
           >
-            {isHe ? "Hebrew → English" : "English → Hebrew"}
+            {directionLabel}
           </div>
         </div>
       </button>
@@ -410,7 +585,7 @@ export default function VoiceTranslator() {
               borderRadius: 12,
               display: "grid",
               placeItems: "center",
-              background: "linear-gradient(135deg, var(--en-deep), var(--he-deep))",
+              background: "linear-gradient(135deg, var(--en-deep), var(--alt-deep))",
               boxShadow: "0 6px 18px rgba(56,189,248,0.3)",
             }}
           >
@@ -433,10 +608,17 @@ export default function VoiceTranslator() {
                 whiteSpace: "nowrap",
               }}
             >
-              Hebrew Translator
+              Live Translator
             </div>
-            <div style={{ fontSize: 13, color: "var(--text-dim)", fontFamily: HEB_FONT }}>
-              English ⇄ עברית
+            <div
+              style={{
+                fontSize: 13,
+                color: "var(--text-dim)",
+                fontFamily: other.font,
+                direction: other.dir,
+              }}
+            >
+              English ⇄ {other.nativeName}
             </div>
           </div>
         </div>
@@ -451,6 +633,9 @@ export default function VoiceTranslator() {
         </TextButton>
       </header>
 
+      {/* Language picker — prominent, horizontally swipeable on mobile */}
+      <LanguagePicker />
+
       {/* Contextual toolbar — only when there's a conversation to act on */}
       {turns.length > 0 && (
         <div
@@ -458,7 +643,7 @@ export default function VoiceTranslator() {
             display: "flex",
             justifyContent: "flex-end",
             gap: 8,
-            padding: "12px 18px 0",
+            padding: "8px 18px 0",
           }}
         >
           {hasContent && (
@@ -498,10 +683,11 @@ export default function VoiceTranslator() {
             </div>
             <div style={{ color: "var(--text-dim)", fontSize: 15.5, lineHeight: 1.6 }}>
               Tap the blue button to talk in{" "}
-              <span style={{ color: "var(--en)", fontWeight: 600 }}>English</span> and hear it in
-              Hebrew. Tap the green button to talk in{" "}
-              <span style={{ color: "var(--he)", fontWeight: 600 }}>Hebrew</span> and hear it in
-              English.
+              <span style={{ color: "var(--en)", fontWeight: 600 }}>English</span> and hear it in{" "}
+              <span style={{ color: "var(--alt)", fontWeight: 600 }}>{other.englishName}</span>. Tap
+              the green button to talk in{" "}
+              <span style={{ color: "var(--alt)", fontWeight: 600 }}>{other.englishName}</span> and
+              hear it in English.
             </div>
             <div
               style={{
@@ -518,8 +704,9 @@ export default function VoiceTranslator() {
         )}
 
         {turns.map((turn) => {
-          const heFirst = turn.srcLang === "he";
-          const srcAccent = heFirst ? "var(--he)" : "var(--en)";
+          const srcInfo = langInfo(turn.srcLang);
+          const dstInfo = langInfo(turn.dstLang);
+          const srcAccent = turn.srcLang === "en" ? "var(--en)" : "var(--alt)";
           return (
             <div
               key={turn.id}
@@ -541,8 +728,8 @@ export default function VoiceTranslator() {
                   fontSize: 15,
                   lineHeight: 1.5,
                   color: "var(--text-dim)",
-                  direction: heFirst ? "rtl" : "ltr",
-                  fontFamily: heFirst ? HEB_FONT : UI_FONT,
+                  direction: srcInfo.dir,
+                  fontFamily: srcInfo.font,
                   borderInlineStart: `3px solid ${srcAccent}`,
                 }}
               >
@@ -558,8 +745,8 @@ export default function VoiceTranslator() {
                   fontSize: 18,
                   lineHeight: 1.55,
                   fontWeight: 600,
-                  direction: heFirst ? "ltr" : "rtl",
-                  fontFamily: heFirst ? UI_FONT : HEB_FONT,
+                  direction: dstInfo.dir,
+                  fontFamily: dstInfo.font,
                   color: turn.failed ? "var(--rec)" : "var(--text)",
                 }}
               >
@@ -582,7 +769,7 @@ export default function VoiceTranslator() {
                 )}
               </div>
 
-              {/* Per-card actions — labeled, tappable */}
+              {/* Per-card actions */}
               {turn.dstText && !turn.failed && (
                 <div
                   onClick={(e) => e.stopPropagation()}
@@ -594,7 +781,7 @@ export default function VoiceTranslator() {
                   }}
                 >
                   <TextButton
-                    onClick={() => speak(turn.dstText, heFirst ? "en" : "he")}
+                    onClick={() => speak(turn.dstText, turn.dstLang)}
                     title="Play the translation aloud"
                   >
                     <span style={{ fontSize: 13 }}>▶</span> Play
@@ -611,7 +798,7 @@ export default function VoiceTranslator() {
         {interim && (
           <div
             style={{
-              alignSelf: listening === "he" ? "flex-end" : "flex-start",
+              alignSelf: listening === "en" ? "flex-start" : "flex-end",
               maxWidth: "85%",
               background: "var(--surface-strong)",
               border: "1px solid var(--border-strong)",
@@ -619,14 +806,14 @@ export default function VoiceTranslator() {
               padding: "12px 16px",
               fontSize: 16,
               color: "var(--text)",
-              direction: listening === "he" ? "rtl" : "ltr",
-              fontFamily: listening === "he" ? HEB_FONT : UI_FONT,
+              direction: listening ? langInfo(listening).dir : "ltr",
+              fontFamily: listening ? langInfo(listening).font : UI_FONT,
               display: "flex",
               alignItems: "center",
               gap: 10,
             }}
           >
-            <Equalizer color={listening === "he" ? "var(--he)" : "var(--en)"} />
+            <Equalizer color={listening === "en" ? "var(--en)" : "var(--alt)"} />
             <span style={{ opacity: 0.85 }}>{interim}</span>
           </div>
         )}
@@ -658,7 +845,7 @@ export default function VoiceTranslator() {
           <textarea
             value={manualText}
             onChange={(e) => setManualText(e.target.value)}
-            placeholder="Type or paste text in English or Hebrew…"
+            placeholder={`Type or paste text in English or ${other.englishName}…`}
             rows={2}
             autoFocus
             style={{
@@ -690,29 +877,30 @@ export default function VoiceTranslator() {
                 cursor: "pointer",
               }}
             >
-              English → עברית
+              English → {other.nativeName}
             </button>
             <button
-              onClick={() => submitManual("he")}
+              onClick={() => submitManual(otherLang)}
               style={{
                 flex: 1,
                 minHeight: 48,
                 borderRadius: 12,
                 border: "none",
-                background: "linear-gradient(135deg, var(--he-deep), var(--he))",
+                background: "linear-gradient(135deg, var(--alt-deep), var(--alt))",
                 color: "#06121f",
                 fontWeight: 700,
                 fontSize: 14.5,
                 cursor: "pointer",
+                fontFamily: other.font,
               }}
             >
-              עברית → English
+              {other.nativeName} → English
             </button>
           </div>
         </div>
       )}
 
-      {/* Bottom controls — the two mic buttons are the hero, with a clear typing alternative */}
+      {/* Bottom controls — two mic buttons (English + selected language) */}
       <div
         style={{
           padding: "12px 18px calc(14px + env(safe-area-inset-bottom))",
@@ -725,7 +913,7 @@ export default function VoiceTranslator() {
       >
         <div style={{ display: "flex", gap: 12 }}>
           <MicButton lang="en" />
-          <MicButton lang="he" />
+          <MicButton lang={otherLang} />
         </div>
         <button
           onClick={() => setShowManual((s) => !s)}
