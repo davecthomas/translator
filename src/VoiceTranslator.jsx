@@ -118,6 +118,7 @@ function TextButton({ onClick, children, tone = "neutral", title }) {
   return (
     <button
       title={title}
+      aria-label={title}
       onClick={onClick}
       style={{
         display: "inline-flex",
