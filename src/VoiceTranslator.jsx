@@ -117,10 +117,14 @@ function voiceTier(voice) {
   return 2;
 }
 
+// Display label for the badge in the picker. We intentionally don't label
+// tier 2 ("Standard") — it's the implied baseline, so labeling it would just
+// repeat "Standard" next to every voice in the dropdown when no Premium or
+// Enhanced downloads are installed. Only tiers that *differ* from baseline
+// get a badge.
 const TIER_LABEL = {
   4: "Premium",
   3: "Enhanced",
-  2: "Standard",
   1: "Compact",
 };
 
