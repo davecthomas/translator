@@ -14,10 +14,10 @@
   --en-deep: #0ea5e9;
   --en-glow: rgba(56, 189, 248, 0.35);
 
-  /* Hebrew side — emerald */
-  --he: #34d399;
-  --he-deep: #10b981;
-  --he-glow: rgba(52, 211, 153, 0.35);
+  /* Non-English side — emerald (used by whichever language is selected) */
+  --alt: #34d399;
+  --alt-deep: #10b981;
+  --alt-glow: rgba(52, 211, 153, 0.35);
 
   /* Recording — rose */
   --rec: #fb7185;
@@ -131,6 +131,12 @@ button {
     transform: translateY(6px);
     opacity: 1;
   }
+}
+
+/* Hide the language-picker horizontal scrollbar (chrome/safari) — Firefox
+   already hidden via scrollbarWidth:none on the element itself. */
+.lang-strip::-webkit-scrollbar {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -16,6 +16,19 @@ if (!process.env.ANTHROPIC_API_KEY) {
 
 const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from env
 
+// Supported languages. English is always one side of the pair; the user picks
+// the other. Keep the prompt-facing name natural (e.g. "Mandarin Chinese"
+// rather than just "Mandarin") so the model produces idiomatic output.
+const LANG_NAMES = {
+  en: "English",
+  he: "Hebrew",
+  es: "Spanish",
+  fr: "French",
+  zh: "Mandarin Chinese",
+  de: "German",
+};
+const SUPPORTED = Object.keys(LANG_NAMES);
+
 app.use(express.json({ limit: "1mb" }));
 
 // Liveness/readiness probe. Reports whether the API key is configured.
@@ -23,26 +36,38 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, keyConfigured: Boolean(process.env.ANTHROPIC_API_KEY) });
 });
 
-// POST /api/translate  { text: string, srcLang: "en" | "he" }
+// POST /api/translate  { text: string, srcLang: code, dstLang: code }
+// srcLang/dstLang are any of the codes in SUPPORTED. One side must be 'en'.
 app.post("/api/translate", async (req, res) => {
   try {
-    const { text, srcLang } = req.body || {};
-    if (typeof text !== "string" || !text.trim() || !["en", "he"].includes(srcLang)) {
-      return res.status(400).json({ error: "Provide { text, srcLang: 'en'|'he' }" });
+    const { text, srcLang, dstLang } = req.body || {};
+    if (
+      typeof text !== "string" ||
+      !text.trim() ||
+      !SUPPORTED.includes(srcLang) ||
+      !SUPPORTED.includes(dstLang) ||
+      srcLang === dstLang ||
+      (srcLang !== "en" && dstLang !== "en")
+    ) {
+      return res.status(400).json({
+        error: `Provide { text, srcLang, dstLang } where both are in [${SUPPORTED.join(
+          ", "
+        )}] and one side is 'en'.`,
+      });
     }
     if (!process.env.ANTHROPIC_API_KEY) {
       return res
         .status(503)
         .json({ error: "Server is missing ANTHROPIC_API_KEY. Set it and restart." });
     }
-    const target = srcLang === "he" ? "English" : "Hebrew";
+    const targetName = LANG_NAMES[dstLang];
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 1000,
       messages: [
         {
           role: "user",
-          content: `Translate the following into natural, conversational ${target}. Respond with ONLY the translation, no preamble, no quotes, no explanation.\n\n${text}`,
+          content: `Translate the following into natural, conversational ${targetName}. Respond with ONLY the translation, no preamble, no quotes, no explanation.\n\n${text}`,
         },
       ],
     });
