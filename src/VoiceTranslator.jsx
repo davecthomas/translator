@@ -833,8 +833,7 @@ export default function VoiceTranslator() {
                   padding: "6px 0 2px",
                 }}
               >
-                Your browser hasn't loaded its voice list yet — try toggling this panel again in a
-                moment.
+                Loading voices…
               </div>
             )}
           </div>
