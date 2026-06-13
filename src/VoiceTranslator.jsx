@@ -18,6 +18,8 @@ const LANGUAGES = {
     speech: "he-IL",
     dir: "rtl",
     font: HEB_FONT,
+    speakLabel: "דברו עברית",
+    listeningLabel: "מקליט… הקש לסיום",
   },
   es: {
     nativeName: "Español",
@@ -26,6 +28,8 @@ const LANGUAGES = {
     speech: "es-ES",
     dir: "ltr",
     font: UI_FONT,
+    speakLabel: "Habla en español",
+    listeningLabel: "Escuchando… toca para parar",
   },
   fr: {
     nativeName: "Français",
@@ -34,6 +38,8 @@ const LANGUAGES = {
     speech: "fr-FR",
     dir: "ltr",
     font: UI_FONT,
+    speakLabel: "Parle en français",
+    listeningLabel: "Écoute… appuie pour arrêter",
   },
   zh: {
     nativeName: "中文",
@@ -42,6 +48,8 @@ const LANGUAGES = {
     speech: "zh-CN",
     dir: "ltr",
     font: UI_FONT,
+    speakLabel: "说中文",
+    listeningLabel: "聆听中… 点击停止",
   },
   de: {
     nativeName: "Deutsch",
@@ -50,6 +58,8 @@ const LANGUAGES = {
     speech: "de-DE",
     dir: "ltr",
     font: UI_FONT,
+    speakLabel: "Sprich Deutsch",
+    listeningLabel: "Hört zu… tippen zum Stoppen",
   },
 };
 
@@ -65,6 +75,8 @@ const ENGLISH = {
   speech: "en-US",
   dir: "ltr",
   font: UI_FONT,
+  speakLabel: "Speak English",
+  listeningLabel: "Listening… tap to stop",
 };
 
 function langInfo(code) {
@@ -458,12 +470,8 @@ export default function VoiceTranslator() {
     const dstInfo = langInfo(isEn ? otherLang : "en");
     const directionLabel = `${info.englishName} → ${dstInfo.englishName}`;
 
-    const activeLabel = isEn
-      ? "Listening… tap to stop"
-      : info.dir === "rtl"
-      ? "מקליט… הקש לסיום"
-      : `Listening… tap to stop`;
-    const idleLabel = isEn ? "Speak English" : `Speak ${info.englishName}`;
+    const activeLabel = info.listeningLabel;
+    const idleLabel = info.speakLabel;
 
     return (
       <button
