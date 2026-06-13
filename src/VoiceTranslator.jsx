@@ -83,27 +83,67 @@ const PREFERRED_VOICES = {
   de: ["Anna", "Petra", "Markus", "Google Deutsch"],
 };
 
+// Apple "novelty" voices — sound-effect synthesizers (Bahh / Bells /
+// Trinoids / Zarvox / etc.) that read text in special-effects style. They
+// have a positive language match, but are objectively unsuitable for
+// translation playback. Listed by display name (URI varies by macOS rev).
+const NOVELTY_VOICE_NAMES = new Set([
+  "Bahh", "Bells", "Boing", "Bubbles", "Cellos", "Deranged",
+  "Good News", "Bad News", "Hysterical", "Pipe Organ",
+  "Trinoids", "Whisper", "Zarvox", "Wobble",
+]);
+
+// Voice quality tier. Higher = better. The single biggest quality signal is
+// Apple's voiceURI prefix: `.compact.` and `.super-compact.` are the small
+// legacy synthesizers (robotic); `.enhanced.`, `.eloquence.` are the modern
+// non-neural voices; `.premium.` are the high-quality downloaded voices.
+// Microsoft "Online (Natural)" and Google's "Online" voices use name markers
+// rather than URIs, so we also detect Premium/Natural/Neural in the name.
+//
+// -1 → novelty / sound-effect, hide entirely
+//  0 → super-compact (smallest/worst), hide entirely
+//  1 → compact (legacy, robotic) — hide if a higher tier exists for this lang
+//  2 → standard OS voice
+//  3 → enhanced / eloquence
+//  4 → premium / neural / natural
+function voiceTier(voice) {
+  const uri = (voice.voiceURI || "").toLowerCase();
+  const name = voice.name || "";
+  if (NOVELTY_VOICE_NAMES.has(name)) return -1;
+  if (uri.includes("super-compact") || uri.includes("super_compact")) return 0;
+  if (uri.includes(".premium.") || /\b(Premium|Neural|Natural)\b/i.test(name)) return 4;
+  if (uri.includes(".enhanced.") || uri.includes(".eloquence.") || /\bEnhanced\b/i.test(name)) return 3;
+  if (uri.includes(".compact.") || /\bcompact\b/i.test(name)) return 1;
+  return 2;
+}
+
+const TIER_LABEL = {
+  4: "Premium",
+  3: "Enhanced",
+  2: "Standard",
+  1: "Compact",
+};
+
 // Score a SpeechSynthesisVoice for a target language. Returns -1 if the voice
-// is the wrong language; otherwise a number where higher is better. The
-// ordering is: exact locale match > base-language match > curated voice name
-// > "Enhanced/Premium/Natural/Neural" marker > generic. "compact" and
-// "novelty" voices are penalized (those are Apple's low-quality fallbacks).
+// is the wrong language or is a novelty / super-compact tier (always-hidden).
+// Tier dominates score so a Premium voice always sorts above an Enhanced one
+// of the same language, regardless of curated-name match.
 function scoreVoice(voice, langCode) {
   const target = langCode === "en" ? "en-US" : LANGUAGES[langCode].speech;
   const baseTarget = target.split("-")[0];
   const voiceBase = (voice.lang || "").split("-")[0];
   if (voiceBase !== baseTarget) return -1;
 
-  let score = 0;
-  if (voice.lang === target) score += 10;
-  else score += 3;
+  const tier = voiceTier(voice);
+  if (tier < 1) return -1;
+
+  let score = tier * 1000;
+  if (voice.lang === target) score += 100;
 
   const curated = PREFERRED_VOICES[langCode] || [];
   if (curated.some((n) => voice.name === n || voice.name.startsWith(n + " ") || voice.name.startsWith(n + "("))) {
-    score += 100;
+    score += 500;
   }
-  if (/\b(Enhanced|Premium|Natural|Neural)\b/i.test(voice.name)) score += 20;
-  if (/\b(compact|novelty)\b/i.test(voice.name)) score -= 30;
   return score;
 }
 
@@ -291,28 +331,45 @@ export default function VoiceTranslator() {
     } catch (e) {}
   }, [voiceByLang]);
 
-  // The voice name actually used for each language: user's pick if it still
-  // exists on this device, otherwise auto-picked from `PREFERRED_VOICES` and
-  // the generic quality heuristic.
+  // The voice name actually used for each language: user's pick if it is
+  // still in the shown list (i.e. installed AND not filtered out as a low-
+  // quality tier), otherwise auto-picked from PREFERRED_VOICES + the quality
+  // heuristic. The shown-list check silently upgrades old saved Compact picks
+  // to the new auto-picked Premium when better voices become available.
   const effectiveVoiceByLang = useMemo(() => {
     const out = {};
     for (const code of ["en", ...LANG_CODES]) {
       const pick = voiceByLang[code];
-      const userVoice = pick && voices.find((v) => v.name === pick);
+      const shown = voicesByLang[code] || [];
+      const userVoice = pick && shown.find((v) => v.name === pick);
       out[code] = userVoice ? userVoice.name : pickPreferredVoice(voices, code)?.name || null;
     }
     return out;
-  }, [voices, voiceByLang]);
+  }, [voices, voiceByLang, voicesByLang]);
 
-  // Voices grouped by language code, for rendering selectors. Filter so the
-  // English row only shows English voices, the Hebrew row only Hebrew, etc.
+  // Voices grouped by language code, for rendering selectors. Filtering rules:
+  //   - Wrong-language voices: hidden (different filter than the picker UI).
+  //   - Novelty / super-compact: hidden always (objectively unsuitable).
+  //   - Compact (tier 1): hidden ONLY when a higher-tier voice exists for the
+  //     same language — so a Mac that only has compact Carmit installed for
+  //     Hebrew still gets to pick something, but if Premium Samantha is also
+  //     installed for English we hide the legacy Compact Samantha.
   const voicesByLang = useMemo(() => {
     const out = {};
     for (const code of ["en", ...LANG_CODES]) {
       const target = code === "en" ? "en-US" : LANGUAGES[code].speech;
       const base = target.split("-")[0];
-      out[code] = voices
-        .filter((v) => (v.lang || "").split("-")[0] === base)
+      const inLang = voices.filter(
+        (v) => (v.lang || "").split("-")[0] === base && voiceTier(v) >= 1
+      );
+      if (inLang.length === 0) {
+        out[code] = [];
+        continue;
+      }
+      const maxTier = Math.max(...inLang.map(voiceTier));
+      const minShow = maxTier >= 2 ? 2 : 1;
+      out[code] = inLang
+        .filter((v) => voiceTier(v) >= minShow)
         .sort((a, b) => scoreVoice(b, code) - scoreVoice(a, code));
     }
     return out;
@@ -656,11 +713,18 @@ export default function VoiceTranslator() {
           }}
         >
           {hasAny ? (
-            list.map((v) => (
-              <option key={v.name} value={v.name}>
-                {v.name} {v.localService ? "" : "· cloud"}
-              </option>
-            ))
+            list.map((v) => {
+              const tier = voiceTier(v);
+              const tierLabel = TIER_LABEL[tier];
+              const cloudLabel = v.localService ? "" : " · cloud";
+              return (
+                <option key={v.name} value={v.name}>
+                  {v.name}
+                  {tierLabel ? ` · ${tierLabel}` : ""}
+                  {cloudLabel}
+                </option>
+              );
+            })
           ) : (
             <option value="">No voices installed for {info.englishName}</option>
           )}
@@ -691,10 +755,21 @@ export default function VoiceTranslator() {
   };
 
   const VoiceSelector = () => {
+    const tierBadge = (voiceName) => {
+      if (!voiceName) return "";
+      const v = voices.find((x) => x.name === voiceName);
+      const t = v ? voiceTier(v) : 0;
+      const label = TIER_LABEL[t];
+      return label ? ` (${label})` : "";
+    };
     const enName = effectiveVoiceByLang.en;
     const altName = effectiveVoiceByLang[otherLang];
+    const enSummary = enName ? `${enName}${tierBadge(enName)}` : "";
+    const altSummary = altName ? `${altName}${tierBadge(altName)}` : "";
     const summary =
-      enName && altName ? `${enName} · ${altName}` : enName || altName || "No voices available";
+      enSummary && altSummary
+        ? `${enSummary} · ${altSummary}`
+        : enSummary || altSummary || "No voices available";
 
     return (
       <div style={{ padding: "0 18px 4px" }}>
