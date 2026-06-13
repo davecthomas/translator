@@ -87,6 +87,58 @@ npm start          # serves dist/ AND the API from a single port (3001)
 
 Then open **http://localhost:3001**. Set `PORT` to serve elsewhere.
 
+## Deploy to Vercel (free Hobby plan)
+
+The repo is ready for Vercel out of the box. The same translation core (`server/translate-core.mjs`) powers both the local Express dev route and a Vercel serverless function (`api/translate.mjs`), so the contract can't drift between environments.
+
+### Account-specific config stays out of git
+
+**Nothing in this repository contains your Vercel account information**, and it should stay that way. The deploy is wired up through Vercel's web dashboard, not via committed files. Specifically:
+
+- `.gitignore` excludes `.vercel/` — that directory is created by `vercel link` / `vercel pull` and contains your `projectId` and `orgId`. Even though those aren't passwords, they're account fingerprints — keep them local.
+- The `ANTHROPIC_API_KEY` (the actual secret) is set in **Vercel → Project Settings → Environment Variables**, not in any file. For local dev, the same key goes in `.env` (also gitignored).
+- There is no `vercel.json` and you do not need one — Vercel auto-detects Vite + the `api/` functions. If you choose to add one later for custom rewrites, keep it free of account IDs / tokens.
+- The GitHub Action in this repo (`.github/workflows/build.yml`) only runs `npm ci && npm run build`. It does **not** deploy and does **not** need a `VERCEL_TOKEN` secret — deploys are triggered by Vercel's native GitHub integration, which uses your account's OAuth grant, not a token in CI.
+
+If you ever do want CI-driven deploys (rather than Vercel's GitHub integration), the tokens (`VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`) belong in **GitHub → Settings → Secrets and variables → Actions**, never in committed files.
+
+### One-time setup — scripted (recommended)
+
+Two things only you can do (interactive, no script can automate them):
+
+1. Sign up at [vercel.com](https://vercel.com) — the free **Hobby** tier covers this app.
+2. `npx vercel login` — this opens a browser for OAuth.
+
+Then everything else is one command:
+
+```bash
+npm run vercel:setup
+```
+
+The script (`scripts/setup-vercel.sh`) is idempotent and safe to re-run. It will:
+
+- Verify you're logged into the Vercel CLI.
+- `vercel link` this checkout to a Vercel project (creates the gitignored `.vercel/project.json`).
+- Read `ANTHROPIC_API_KEY` from your shell environment or local `.env`.
+- Upload it to **production**, **preview**, and **development** environment scopes, skipping any scope where it's already set.
+- Trigger a production deploy.
+
+Verify the deploy with `GET /api/health` on your deploy URL — it returns `{ ok: true, keyConfigured: true }` when the key is wired up.
+
+Subsequent pushes to `main` deploy to prod via Vercel's GitHub integration; pull requests get preview URLs automatically.
+
+### One-time setup — manual fallback
+
+If you'd rather click through the dashboard:
+
+1. **Import Project** → pick this GitHub repo. Vercel auto-detects Vite + the `api/` functions.
+2. In **Project Settings → Environment Variables**, add `ANTHROPIC_API_KEY` (set for *all environments*).
+3. Trigger the first deploy.
+
+### Optional: link locally for `vercel dev`
+
+`vercel dev` gives you the same serverless runtime locally as in production. Once you've run `npm run vercel:setup` (or `vercel link` directly), `vercel dev` works without any further setup. `.vercel/project.json` stays out of git.
+
 ## Configuration
 
 | Variable | Required | Default | Purpose |
@@ -101,11 +153,16 @@ configured, which is handy for deploy checks.
 
 | Path | Purpose |
 |---|---|
-| `start.sh` | One-command launcher (`./start.sh` or `npm run go`) |
+| `start.sh` | One-command local launcher (`./start.sh` or `npm run go`) |
+| `scripts/setup-vercel.sh` | One-command Vercel setup (`npm run vercel:setup`) — idempotent |
 | `src/VoiceTranslator.jsx` | Full UI: mic buttons, transcript cards, TTS, copy/export, typed fallback |
 | `src/styles.css` | Design tokens, ambient background, animations |
 | `src/main.jsx` | React entry point |
-| `server/index.mjs` | Express proxy → Anthropic API (+ health check, static serving) |
+| `server/translate-core.mjs` | Shared translation logic (validation + Anthropic call) used by both transports |
+| `server/index.mjs` | Local Express dev server → calls `translate-core` (+ health check, static serving) |
+| `api/translate.mjs` | Vercel serverless function → calls `translate-core` |
+| `api/health.mjs` | Vercel serverless function — `/api/health` deploy probe |
+| `.github/workflows/build.yml` | CI: install + `vite build` on each PR and `main` push |
 | `vite.config.js` | Dev server + `/api` proxy |
 | `index.html` | Entry HTML; loads Inter + Frank Ruhl Libre |
 

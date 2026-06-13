@@ -11,7 +11,8 @@
     "dev:server": "node --env-file-if-exists=.env server/index.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "NODE_ENV=production node --env-file-if-exists=.env server/index.mjs"
+    "start": "NODE_ENV=production node --env-file-if-exists=.env server/index.mjs",
+    "vercel:setup": "sh scripts/setup-vercel.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

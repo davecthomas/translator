@@ -1,0 +1,21 @@
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      # Build the frontend bundle. Catches transform-time regressions before
+      # they hit Vercel; runtime React errors (TDZ, hook misuse) still need
+      # human verification of the rendered page, see CONTRIBUTING / PR template.
+      - run: npm run build
