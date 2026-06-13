@@ -335,9 +335,8 @@ export default function VoiceTranslator() {
     } catch (e) {}
   }, [voiceByLang]);
 
-  // The voice name actually used for each language: user's pick if it is
   // Voices grouped by language code, for rendering selectors. Filtering rules:
-  //   - Wrong-language voices: hidden (different filter than the picker UI).
+  //   - Wrong-language voices: hidden.
   //   - Novelty / super-compact: hidden always (objectively unsuitable).
   //   - Compact (tier 1): hidden ONLY when a higher-tier voice exists for the
   //     same language — so a Mac that only has compact Carmit installed for
@@ -380,10 +379,14 @@ export default function VoiceTranslator() {
     return out;
   }, [voices, voiceByLang, voicesByLang]);
 
+  // Auto-scroll to bottom on new content — but only if the user is already
+  // near the bottom. Otherwise they're reading history and we'd yank them
+  // back every time `interim` updates mid-speech, which is jarring.
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom < 80) el.scrollTop = el.scrollHeight;
   }, [turns, interim, busy]);
 
   const other = useMemo(() => LANGUAGES[otherLang], [otherLang]);
@@ -394,7 +397,19 @@ export default function VoiceTranslator() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, srcLang, dstLang }),
     });
-    if (!res.ok) throw new Error(`API ${res.status}`);
+    if (!res.ok) {
+      // Surface the server's error body when it's JSON; otherwise the user
+      // sees only the generic "Translation failed" and can't tell why
+      // (auth wall, key missing, validation reject, model 5xx, etc.).
+      let detail = `API ${res.status}`;
+      try {
+        const body = await res.json();
+        if (body?.error) detail = body.error;
+      } catch (_) {
+        /* non-JSON (e.g. an SSO HTML page) — leave the status-code detail */
+      }
+      throw new Error(detail);
+    }
     const data = await res.json();
     if (!data.translation) throw new Error("Empty translation");
     return data.translation;
@@ -432,11 +447,13 @@ export default function VoiceTranslator() {
         setTurns((t) => t.map((x) => (x.id === id ? { ...x, dstText: dst } : x)));
         if (speakAloud) speak(dst, dstLang);
       } catch (e) {
+        const reason = (e?.message || "").trim();
+        const label = reason
+          ? `Translation failed: ${reason} — tap to retry`
+          : "Translation failed — tap to retry";
         setTurns((t) =>
           t.map((x) =>
-            x.id === id
-              ? { ...x, dstText: "Translation failed — tap to retry", failed: true }
-              : x
+            x.id === id ? { ...x, dstText: label, failed: true } : x
           )
         );
       } finally {

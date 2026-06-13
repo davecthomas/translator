@@ -1,12 +1,12 @@
 <div align="center">
 
-# Kol · Hebrew Live Translator
+# Kol · Live Voice Translator
 
-**Real-time, bidirectional English ⇄ Hebrew voice translation in the browser.**
+**Real-time, bidirectional English ⇄ {Hebrew · Spanish · French · Mandarin · German} voice translation in the browser.**
 
 Speak into the mic in either language — Kol transcribes your speech, translates it with Claude, displays both sides, and reads the translation aloud.
 
-`קול` *(kol)* — Hebrew for **voice**.
+`קול` *(kol)* — Hebrew for **voice**: the project started as an English ⇄ Hebrew translator and grew from there.
 
 </div>
 
@@ -14,7 +14,7 @@ Speak into the mic in either language — Kol transcribes your speech, translate
 
 ## Features
 
-- 🎙 **Bidirectional voice** — one tap for English→Hebrew, one for Hebrew→English.
+- 🎙 **Bidirectional voice** — pick the non-English language with the picker; one tap goes English→other, one tap goes other→English.
 - 🔊 **Speaks translations aloud** with native text-to-speech (toggleable).
 - ✍️ **Live transcription** with an animated waveform as you talk.
 - ⌨️ **Type fallback** for browsers without speech recognition, or for pasting text.
@@ -28,13 +28,14 @@ Speak into the mic in either language — Kol transcribes your speech, translate
 
 ```
 Browser (Vite + React, port 5173)
-  ├─ Web Speech API  → speech-to-text (en-US / he-IL)
+  ├─ Web Speech API  → speech-to-text (en-US / he-IL / es-ES / fr-FR / zh-CN / de-DE)
   ├─ SpeechSynthesis → reads translations aloud
-  └─ POST /api/translate
-        │  (Vite dev proxy)
+  └─ POST /api/translate  { text, srcLang, dstLang }   (one side must be 'en')
+        │  (Vite dev proxy in dev; same-origin in production)
         ▼
-Express proxy (port 3001)
-  └─ @anthropic-ai/sdk → claude-sonnet-4-6
+Express proxy (port 3001)  ─or─  Vercel serverless function (api/translate.mjs)
+  └─ shared core: server/translate-core.mjs
+       └─ @anthropic-ai/sdk → claude-sonnet-4-6
 ```
 
 The Express layer exists for one reason: it keeps `ANTHROPIC_API_KEY` server-side, so the
@@ -49,8 +50,8 @@ key is never shipped to the browser.
 ## Quick start
 
 ```bash
-git clone https://github.com/davecthomas/hebrew-live-translator.git
-cd hebrew-live-translator
+git clone https://github.com/davecthomas/translator.git
+cd translator
 cp .env.example .env          # then edit .env and paste your key
 ./start.sh
 ```
@@ -101,6 +102,15 @@ The repo is ready for Vercel out of the box. The same translation core (`server/
 - The GitHub Action in this repo (`.github/workflows/build.yml`) only runs `npm ci && npm run build`. It does **not** deploy and does **not** need a `VERCEL_TOKEN` secret — deploys are triggered by Vercel's native GitHub integration, which uses your account's OAuth grant, not a token in CI.
 
 If you ever do want CI-driven deploys (rather than Vercel's GitHub integration), the tokens (`VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`) belong in **GitHub → Settings → Secrets and variables → Actions**, never in committed files.
+
+### A note on public exposure and billing
+
+`/api/translate` calls the Anthropic API on every request, which costs you money. There is no rate limiting in the app. Two reasonable options:
+
+- **Keep Vercel's Deployment Protection on** (the default for newly-imported projects on Hobby) — only logged-in members of your Vercel team can hit the app. Zero exposure, but not a "share with friends" experience.
+- **Turn Deployment Protection off** and accept that anyone who finds the URL can drive Anthropic spend. For a hobby deploy this is usually fine; if it ever isn't, add a Vercel/Cloudflare rate-limit rule in front of `/api/translate` before you scale traffic.
+
+Pick deliberately. Toggle in **Vercel Dashboard → Project Settings → Deployment Protection**.
 
 ### One-time setup — scripted (recommended)
 
