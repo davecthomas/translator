@@ -332,21 +332,6 @@ export default function VoiceTranslator() {
   }, [voiceByLang]);
 
   // The voice name actually used for each language: user's pick if it is
-  // still in the shown list (i.e. installed AND not filtered out as a low-
-  // quality tier), otherwise auto-picked from PREFERRED_VOICES + the quality
-  // heuristic. The shown-list check silently upgrades old saved Compact picks
-  // to the new auto-picked Premium when better voices become available.
-  const effectiveVoiceByLang = useMemo(() => {
-    const out = {};
-    for (const code of ["en", ...LANG_CODES]) {
-      const pick = voiceByLang[code];
-      const shown = voicesByLang[code] || [];
-      const userVoice = pick && shown.find((v) => v.name === pick);
-      out[code] = userVoice ? userVoice.name : pickPreferredVoice(voices, code)?.name || null;
-    }
-    return out;
-  }, [voices, voiceByLang, voicesByLang]);
-
   // Voices grouped by language code, for rendering selectors. Filtering rules:
   //   - Wrong-language voices: hidden (different filter than the picker UI).
   //   - Novelty / super-compact: hidden always (objectively unsuitable).
@@ -374,6 +359,22 @@ export default function VoiceTranslator() {
     }
     return out;
   }, [voices]);
+
+  // The voice name actually used for each language: user's pick if it is
+  // still in the shown list (i.e. installed AND not filtered out as a low-
+  // quality tier), otherwise auto-picked from PREFERRED_VOICES + the quality
+  // heuristic. The shown-list check silently upgrades old saved Compact picks
+  // to the new auto-picked Premium when better voices become available.
+  const effectiveVoiceByLang = useMemo(() => {
+    const out = {};
+    for (const code of ["en", ...LANG_CODES]) {
+      const pick = voiceByLang[code];
+      const shown = voicesByLang[code] || [];
+      const userVoice = pick && shown.find((v) => v.name === pick);
+      out[code] = userVoice ? userVoice.name : pickPreferredVoice(voices, code)?.name || null;
+    }
+    return out;
+  }, [voices, voiceByLang, voicesByLang]);
 
   useEffect(() => {
     if (scrollRef.current) {
