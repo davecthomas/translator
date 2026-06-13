@@ -65,6 +65,60 @@ const LANGUAGES = {
 
 const LANG_CODES = Object.keys(LANGUAGES);
 const STORAGE_KEY = "translator.otherLang";
+const VOICE_STORAGE_KEY = "translator.voiceByLang";
+
+// Curated list of known-good voices per language. Matched by name prefix
+// so version suffixes like "(Enhanced)" or " - English (United States)" still
+// hit. These names are stable across macOS/iOS and Chrome/Edge — any that
+// don't exist on a given device are silently skipped during scoring.
+const PREFERRED_VOICES = {
+  en: [
+    "Samantha", "Ava", "Allison", "Karen", "Tom", "Daniel",
+    "Google US English", "Microsoft Aria", "Microsoft Jenny",
+  ],
+  he: ["Carmit", "Google עברית"],
+  es: ["Mónica", "Paulina", "Jorge", "Google español"],
+  fr: ["Amélie", "Audrey", "Thomas", "Aurélie", "Google français"],
+  zh: ["Tingting", "Sin-Ji", "Mei-Jia", "Google 普通话（中国大陆）"],
+  de: ["Anna", "Petra", "Markus", "Google Deutsch"],
+};
+
+// Score a SpeechSynthesisVoice for a target language. Returns -1 if the voice
+// is the wrong language; otherwise a number where higher is better. The
+// ordering is: exact locale match > base-language match > curated voice name
+// > "Enhanced/Premium/Natural/Neural" marker > generic. "compact" and
+// "novelty" voices are penalized (those are Apple's low-quality fallbacks).
+function scoreVoice(voice, langCode) {
+  const target = langCode === "en" ? "en-US" : LANGUAGES[langCode].speech;
+  const baseTarget = target.split("-")[0];
+  const voiceBase = (voice.lang || "").split("-")[0];
+  if (voiceBase !== baseTarget) return -1;
+
+  let score = 0;
+  if (voice.lang === target) score += 10;
+  else score += 3;
+
+  const curated = PREFERRED_VOICES[langCode] || [];
+  if (curated.some((n) => voice.name === n || voice.name.startsWith(n + " ") || voice.name.startsWith(n + "("))) {
+    score += 100;
+  }
+  if (/\b(Enhanced|Premium|Natural|Neural)\b/i.test(voice.name)) score += 20;
+  if (/\b(compact|novelty)\b/i.test(voice.name)) score -= 30;
+  return score;
+}
+
+function pickPreferredVoice(voices, langCode) {
+  let best = null;
+  let bestScore = 0;
+  for (const v of voices) {
+    const s = scoreVoice(v, langCode);
+    if (s > bestScore) {
+      best = v;
+      bestScore = s;
+    }
+  }
+  return best;
+}
 
 // English-side speech locale and visual treatment (so the same data shape
 // works for both sides of the mic-button render).
@@ -145,6 +199,39 @@ function TextButton({ onClick, children, tone = "neutral", title }) {
 }
 
 // ---------------------------------------------------------------------------
+// Voice list hook — Chrome populates voices asynchronously via the
+// `voiceschanged` event, so we subscribe to it and re-render when the list
+// changes. Safari returns voices synchronously on first call.
+// ---------------------------------------------------------------------------
+
+function useAvailableVoices() {
+  const [voices, setVoices] = useState(() => {
+    try {
+      return window.speechSynthesis?.getVoices() || [];
+    } catch (e) {
+      return [];
+    }
+  });
+  useEffect(() => {
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+    const update = () => setVoices(synth.getVoices() || []);
+    update();
+    if (typeof synth.addEventListener === "function") {
+      synth.addEventListener("voiceschanged", update);
+      return () => synth.removeEventListener("voiceschanged", update);
+    }
+    // Older Safari uses the property form.
+    const prev = synth.onvoiceschanged;
+    synth.onvoiceschanged = update;
+    return () => {
+      synth.onvoiceschanged = prev;
+    };
+  }, []);
+  return voices;
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -168,6 +255,22 @@ export default function VoiceTranslator() {
     return "he";
   });
 
+  // Voice selection: user picks a voice name per language; missing entries
+  // fall back to the auto-picked preferred voice. We store the voice *name*
+  // (not the object) because the live voice list can be re-fetched any time
+  // and object identity isn't stable across `getVoices()` calls in Safari.
+  const [voiceByLang, setVoiceByLang] = useState(() => {
+    try {
+      const saved = localStorage.getItem(VOICE_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+  const [showVoices, setShowVoices] = useState(false);
+
+  const voices = useAvailableVoices();
+
   const recogRef = useRef(null);
   const scrollRef = useRef(null);
 
@@ -181,6 +284,39 @@ export default function VoiceTranslator() {
       localStorage.setItem(STORAGE_KEY, otherLang);
     } catch (e) {}
   }, [otherLang]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(VOICE_STORAGE_KEY, JSON.stringify(voiceByLang));
+    } catch (e) {}
+  }, [voiceByLang]);
+
+  // The voice name actually used for each language: user's pick if it still
+  // exists on this device, otherwise auto-picked from `PREFERRED_VOICES` and
+  // the generic quality heuristic.
+  const effectiveVoiceByLang = useMemo(() => {
+    const out = {};
+    for (const code of ["en", ...LANG_CODES]) {
+      const pick = voiceByLang[code];
+      const userVoice = pick && voices.find((v) => v.name === pick);
+      out[code] = userVoice ? userVoice.name : pickPreferredVoice(voices, code)?.name || null;
+    }
+    return out;
+  }, [voices, voiceByLang]);
+
+  // Voices grouped by language code, for rendering selectors. Filter so the
+  // English row only shows English voices, the Hebrew row only Hebrew, etc.
+  const voicesByLang = useMemo(() => {
+    const out = {};
+    for (const code of ["en", ...LANG_CODES]) {
+      const target = code === "en" ? "en-US" : LANGUAGES[code].speech;
+      const base = target.split("-")[0];
+      out[code] = voices
+        .filter((v) => (v.lang || "").split("-")[0] === base)
+        .sort((a, b) => scoreVoice(b, code) - scoreVoice(a, code));
+    }
+    return out;
+  }, [voices]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -202,18 +338,26 @@ export default function VoiceTranslator() {
     return data.translation;
   }, []);
 
-  const speak = useCallback((text, langCode) => {
-    try {
-      const info = langInfo(langCode);
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = info.speech;
-      u.rate = 0.95;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
-    } catch (e) {
-      /* speech synthesis unavailable; text is still shown */
-    }
-  }, []);
+  const speak = useCallback(
+    (text, langCode) => {
+      try {
+        const info = langInfo(langCode);
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = info.speech;
+        u.rate = 0.95;
+        const name = effectiveVoiceByLang[langCode];
+        if (name) {
+          const v = voices.find((x) => x.name === name);
+          if (v) u.voice = v;
+        }
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(u);
+      } catch (e) {
+        /* speech synthesis unavailable; text is still shown */
+      }
+    },
+    [voices, effectiveVoiceByLang]
+  );
 
   const handleFinal = useCallback(
     async (text, srcLang, dstLang) => {
@@ -456,6 +600,175 @@ export default function VoiceTranslator() {
   );
 
   // -------------------------------------------------------------------------
+  // Voice selector — collapsible panel under the language picker. Lets the
+  // user override the auto-picked voice per language (with a Sample button to
+  // hear the choice). Uses a native <select> so iOS/Android render their
+  // big tap-friendly wheel pickers for free.
+  // -------------------------------------------------------------------------
+
+  const VoiceRow = ({ langCode }) => {
+    const info = langInfo(langCode);
+    const list = voicesByLang[langCode] || [];
+    const current = effectiveVoiceByLang[langCode] || "";
+    const hasAny = list.length > 0;
+    const sampleText = info.speakLabel;
+
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "8px 0",
+        }}
+      >
+        <div
+          style={{
+            flex: "0 0 auto",
+            minWidth: 96,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 13,
+            color: "var(--text-dim)",
+            fontFamily: info.font,
+          }}
+        >
+          <span aria-hidden="true">{info.flag}</span>
+          <span>{info.englishName}</span>
+        </div>
+        <select
+          value={current}
+          disabled={!hasAny}
+          onChange={(e) => setVoiceByLang((prev) => ({ ...prev, [langCode]: e.target.value }))}
+          aria-label={`${info.englishName} voice`}
+          style={{
+            flex: 1,
+            minHeight: 40,
+            padding: "0 12px",
+            borderRadius: 10,
+            border: "1px solid var(--border-strong)",
+            background: "var(--surface)",
+            color: "var(--text)",
+            fontSize: 14,
+            fontFamily: UI_FONT,
+            cursor: hasAny ? "pointer" : "not-allowed",
+          }}
+        >
+          {hasAny ? (
+            list.map((v) => (
+              <option key={v.name} value={v.name}>
+                {v.name} {v.localService ? "" : "· cloud"}
+              </option>
+            ))
+          ) : (
+            <option value="">No voices installed for {info.englishName}</option>
+          )}
+        </select>
+        <button
+          onClick={() => speak(sampleText, langCode)}
+          disabled={!hasAny}
+          aria-label={`Play sample in ${info.englishName}`}
+          title={`Play sample in ${info.englishName}`}
+          style={{
+            flex: "0 0 auto",
+            minHeight: 40,
+            padding: "0 12px",
+            borderRadius: 10,
+            border: "1px solid var(--border-strong)",
+            background: "var(--surface)",
+            color: hasAny ? "var(--text)" : "var(--text-faint)",
+            fontSize: 13,
+            fontWeight: 600,
+            fontFamily: UI_FONT,
+            cursor: hasAny ? "pointer" : "not-allowed",
+          }}
+        >
+          ▶ Sample
+        </button>
+      </div>
+    );
+  };
+
+  const VoiceSelector = () => {
+    const enName = effectiveVoiceByLang.en;
+    const altName = effectiveVoiceByLang[otherLang];
+    const summary =
+      enName && altName ? `${enName} · ${altName}` : enName || altName || "No voices available";
+
+    return (
+      <div style={{ padding: "0 18px 4px" }}>
+        <button
+          onClick={() => setShowVoices((s) => !s)}
+          aria-expanded={showVoices}
+          aria-controls="voice-selector-panel"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            width: "100%",
+            minHeight: 40,
+            padding: "0 14px",
+            borderRadius: 12,
+            border: "1px solid var(--border)",
+            background: showVoices ? "var(--surface-strong)" : "var(--surface)",
+            color: "var(--text-dim)",
+            fontSize: 13,
+            fontWeight: 600,
+            fontFamily: UI_FONT,
+            cursor: "pointer",
+            transition: "all 160ms ease",
+          }}
+        >
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <span aria-hidden="true">🎙</span>
+            <span>Voices</span>
+            <span
+              style={{
+                color: "var(--text-faint)",
+                fontWeight: 500,
+                marginLeft: 4,
+              }}
+            >
+              {summary}
+            </span>
+          </span>
+          <span aria-hidden="true" style={{ fontSize: 11 }}>
+            {showVoices ? "▴" : "▾"}
+          </span>
+        </button>
+        {showVoices && (
+          <div
+            id="voice-selector-panel"
+            style={{
+              marginTop: 6,
+              padding: "4px 12px 8px",
+              borderRadius: 12,
+              border: "1px solid var(--border)",
+              background: "var(--surface)",
+            }}
+          >
+            <VoiceRow langCode="en" />
+            <VoiceRow langCode={otherLang} />
+            {voices.length === 0 && (
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "var(--text-faint)",
+                  padding: "6px 0 2px",
+                }}
+              >
+                Your browser hasn't loaded its voice list yet — try toggling this panel again in a
+                moment.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // -------------------------------------------------------------------------
   // Mic button — the primary control. `lang` is the source language code.
   // -------------------------------------------------------------------------
 
@@ -644,6 +957,9 @@ export default function VoiceTranslator() {
 
       {/* Language picker — prominent, horizontally swipeable on mobile */}
       <LanguagePicker />
+
+      {/* Voice selector — collapsible, default off so it doesn't dominate */}
+      <VoiceSelector />
 
       {/* Contextual toolbar — only when there's a conversation to act on */}
       {turns.length > 0 && (
