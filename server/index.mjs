@@ -41,6 +41,10 @@ app.post("/api/translate", async (req, res) => {
 if (process.env.NODE_ENV === "production") {
   const dist = path.join(__dirname, "..", "dist");
   app.use(express.static(dist));
+  // Unmatched /api/* must 404 as JSON, not fall through to the SPA fallback —
+  // otherwise typos against the API return a 200 HTML page and look "fine"
+  // to client code that only checked res.ok.
+  app.all("/api/*", (_req, res) => res.status(404).json({ error: "Not found" }));
   app.get("*", (_req, res) => res.sendFile(path.join(dist, "index.html")));
 }
 
